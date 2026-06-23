@@ -122,41 +122,41 @@ source ~/.zshrc
 - DashScope 的 Anthropic 兼容端点对 `max_tokens` 上限是 32768，这是阿里云的限制，不是 skill 的限制。
 - 大图可能较慢（base64 让 payload 变大），skill 已设 `--max-time 90`。
 
+## 
+## Codex 版本（NEW）
+
+本仓库同时提供 **Codex** 版 skill：[codex/](codex/) 目录。
+
+与 Claude 版的核心区别：
+
+| | Claude 版 | Codex 版 |
+|---|---|---|
+| **视觉模型** | 阿里云 DashScope (Qwen3.7-Plus) | Nvidia NIM (Kimi K2.6) |
+| **API 格式** | Anthropic 兼容端点 | OpenAI 兼容端点 |
+| **Key 来源** | DASHSCOPE_API_KEY / cc-switch.db | NVIDIA_API_KEY / cc-switch.db |
+| **实现语言** | Bash | PowerShell（Windows 原生） |
+
+### 安装（Codex 版）
+
+```powershell
+# 1. Clone 仓库
+git clone https://github.com/wangyikun123/image-vision-qwen.git
+
+# 2. 把 codex/ 目录 symlink（或以管理员身份复制）到 Codex skills 目录
+New-Item -ItemType SymbolicLink -Path "$env:USERPROFILE\.codex\skills\codex-image-vision-kimi" -Target "$PWD\codex"
+
+# 3. 设置 API key
+$env:NVIDIA_API_KEY = "nvapi-..."  # 或在 cc-switch 里已有 Nvidia provider 则自动取
+```
+
+### 切换视觉模型
+
+```powershell
+$env:VISION_MODEL = "qwen/qwen3-vl-plus"  # 默认 moonshotai/kimi-k2.6
+```
+
+> 可用模型见 [NVIDIA NIM 目录](https://build.nvidia.com/explore/discover)。
+
 ## 许可证
 
 [MIT](LICENSE)
-
-
-## Codex ???NEW?
-
-??????? **Codex** ? skill?[`codex/`](codex/) ???
-
-? Claude ???????
-
-| | Claude ? | Codex ? |
-|---|---|---|
-| **????** | ??? DashScope (Qwen3.7-Plus) | Nvidia NIM (Kimi K2.6) |
-| **API ??** | Anthropic ???? | OpenAI ???? |
-| **Key ??** | `DASHSCOPE_API_KEY` / cc-switch.db | `NVIDIA_API_KEY` / cc-switch.db |
-| **????** | Bash | PowerShell?Windows ??? |
-
-### ???Codex ??
-
-```powershell
-# 1. Clone ??
-git clone https://github.com/wangyikun123/image-vision-qwen.git
-
-# 2. ? codex/ ?? symlink???????????? Codex skills ??
-New-Item -ItemType SymbolicLink -Path "$env:USERPROFILE\.codex\skills\codex-image-vision-kimi" -Target "$PWD\codex"
-
-# 3. ?? API key
-$env:NVIDIA_API_KEY = "nvapi-..."  # ?? cc-switch ??? Nvidia provider ????
-```
-
-### ??????
-
-```powershell
-$env:VISION_MODEL = "qwen/qwen3-vl-plus"  # ?? moonshotai/kimi-k2.6
-```
-
-> ????? [NVIDIA NIM ??](https://build.nvidia.com/explore/discover)?
