@@ -30,7 +30,7 @@ description: 用阿里云 DashScope 视觉模型识别图片（默认 Qwen3.7-Pl
 # API key（必填）：阿里云百炼/DashScope 控制台获取
 DASHSCOPE_KEY="${DASHSCOPE_API_KEY:-}"
 
-# 识别模型（可选，默认 qwen3.7-plus，可随意改成 qwen-vl-max / qwen-vl-plus 等任意 DashScope 视觉模型）
+# 识别模型（可选，默认 qwen3.7-plus，可随意改成 qwen-vl-max / qwen-vl-plus / qwen3-vl-plus 等任意 DashScope 视觉模型）
 VISION_MODEL="${VISION_MODEL:-qwen3.7-plus}"
 
 if [ -z "$DASHSCOPE_KEY" ]; then
@@ -40,7 +40,7 @@ if [ -z "$DASHSCOPE_KEY" ]; then
 fi
 ```
 
-> **想换视觉模型？** 设 `VISION_MODEL` 环境变量即可，例如 `export VISION_MODEL=qwen-vl-max`，无需改 skill 代码。
+> **想换视觉模型？** 设 `VISION_MODEL` 环境变量即可，例如 `export VISION_MODEL=qwen-vl-max`，无需改 skill 代码。实测可用：`qwen3.7-plus`（默认）、`qwen-vl-max`、`qwen-vl-plus`、`qwen3-vl-plus`。
 
 ## 执行流程
 
@@ -63,37 +63,51 @@ esac
 
 # base64 编码并去换行（兼容 macOS/BSD 和 Linux/GNU）
 if base64 -w 0 "$IMG_PATH" >/dev/null 2>&1; then
-  IMG_B64=$(base64 -w 0 "$IMG_PATH")        # GNU coreutils / Git Bash
+  base64 -w 0 "$IMG_PATH" > /tmp/img.b64        # GNU coreutils / Git Bash
 else
-  IMG_B64=$(base64 "$IMG_PATH" | tr -d '\n') # macOS / BSD
+  base64 "$IMG_PATH" | tr -d '\n' > /tmp/img.b64  # macOS / BSD
 fi
+IMG_B64=$(cat /tmp/img.b64)
 ```
 
 **如果用户直接给了 base64**（贴在对话里），直接用，但要：
 - 去掉可能的 `data:image/png;base64,` 前缀
-- 去掉所有换行：`IMG_B64=$(echo "$RAW" | tr -d '\n')`
+- 去掉所有换行后写入 `/tmp/img.b64`
 
-### 2. 调用 DashScope（关键：max_tokens ≤ 32768）
+### 2. 构造请求体到文件（关键：避免大图超命令行长度限制）
+
+⚠️ **不要用 `curl -d "..."` 内联 base64**——大图 base64 会超命令行长度限制（`Argument list too long`）。必须先把请求体写到文件，再用 `--data @file`：
 
 ```bash
-curl -s --max-time 90 https://dashscope.aliyuncs.com/apps/anthropic/v1/messages \
+# 把图片 base64 和用户问题组装成 JSON 请求体，写到文件
+python -c "
+import json
+body = {
+    'model': '$VISION_MODEL',
+    'max_tokens': 32768,
+    'messages': [{
+        'role': 'user',
+        'content': [
+            {'type': 'image', 'source': {'type': 'base64', 'media_type': '$MT', 'data': open('/tmp/img.b64').read().strip()}},
+            {'type': 'text', 'text': '''<这里填用户的识图问题>'''}
+        ]
+    }]
+}
+json.dump(body, open('/tmp/req.json','w'), ensure_ascii=False)
+"
+```
+
+### 3. 调用 DashScope（关键：max_tokens ≤ 32768）
+
+```bash
+RESP=$(curl -s --max-time 90 https://dashscope.aliyuncs.com/apps/anthropic/v1/messages \
   -H "Authorization: Bearer $DASHSCOPE_KEY" \
   -H "anthropic-version: 2023-06-01" \
   -H "content-type: application/json" \
-  -d "{
-    \"model\": \"$VISION_MODEL\",
-    \"max_tokens\": 32768,
-    \"messages\": [{
-      \"role\": \"user\",
-      \"content\": [
-        {\"type\": \"image\", \"source\": {\"type\": \"base64\", \"media_type\": \"$MT\", \"data\": \"$IMG_B64\"}},
-        {\"type\": \"text\", \"text\": \"<这里填用户的识图问题>\"}
-      ]
-    }]
-  }"
+  --data @/tmp/req.json)
 ```
 
-### 3. 解析返回，提取识别结果
+### 4. 解析返回，提取识别结果
 
 返回 JSON 结构（实测）：
 ```json
@@ -115,21 +129,13 @@ for b in d.get('content', []):
 "
 ```
 
-### 4. 把结果交回主会话
+### 5. 把结果交回主会话
 
 把识别结果告诉用户，然后**继续用当前模型**走后续对话。不需要任何"切回"操作——因为从一开始就没切走。
 
-## 注意事项
-
-- **max_tokens 永远 ≤ 32768**。默认就用 32768（DashScope 上限）。别用更大的值，DashScope 会 400 拒绝并报 `Range of max_tokens should be [1, 32768]`。
-- **media_type 必须和实际图片格式一致**，否则 DashScope 报错。
-- **base64 不能有换行**：见上方跨平台处理。
-- **大图**：base64 会让 JSON payload 变大，`--max-time 90` 给足超时。
-- **不要打印 DASHSCOPE_KEY**：取完直接用，不要 echo。
-
 ## 多图场景
 
-用户一次给多张图：把多个 image block 放进 content 数组：
+用户一次给多张图：把多个 image block 放进 content 数组（同样写到文件再 `--data @file`）：
 ```json
 "content": [
   {"type":"image","source":{"type":"base64","media_type":"image/png","data":"<图1>"}},
@@ -138,12 +144,23 @@ for b in d.get('content', []):
 ]
 ```
 
+## 注意事项
+
+- **max_tokens 永远 ≤ 32768**。默认就用 32768（DashScope 上限）。别用更大的值，DashScope 会 400 拒绝并报 `Range of max_tokens should be [1, 32768]`。
+- **media_type 必须和实际图片格式一致**，否则 DashScope 报错。
+- **base64 不能有换行**：写入文件前确保 `tr -d '\n'`。
+- **大图必须用 `--data @file`**：`curl -d "..."` 内联 base64 会因命令行长度限制失败（`Argument list too long`）。
+- **大图**：base64 会让 JSON payload 变大，`--max-time 90` 给足超时。
+- **不要打印 DASHSCOPE_KEY**：取完直接用，不要 echo。
+
 ## 故障排查
 
 | 现象 | 原因 | 处理 |
 |------|------|------|
 | `Range of max_tokens should be [1, 32768]` | max_tokens 超 32768 | 已固定 32768，不该出现；若出现检查 curl 命令是否被改 |
 | `InvalidParameter` model 相关 | 模型名错 | 确认 `VISION_MODEL` 的值是 DashScope 支持的视觉模型 |
+| `403 Forbidden` | 该模型未在账号开通 | 到阿里云百炼控制台开通该模型，或换 `qwen3.7-plus` |
+| `Argument list too long` | 用了 `curl -d` 内联大图 base64 | 改用 `--data @file`（见执行流程第 2-3 步） |
 | 401 / 认证失败 | key 失效 | 重新检查 `DASHSCOPE_API_KEY` |
 | 图片格式错 | media_type 不匹配 | 按实际扩展名设 media_type |
 | 超时 | 图太大 | 加大 `--max-time`；或先压缩图片 |
@@ -153,7 +170,7 @@ for b in d.get('content', []):
 如果用"切 provider → 识图 → 切回"的方案：
 1. 要改全局激活 provider
 2. 要重启会话 / proxy 才生效
-3. `CLAUDE_CODE_EFFORT_LEVEL=max` 会让客户端发 >32768 的 max_tokens，Qwen 直接 400
+3. `CLAUDE_CODE_EFFORT_LEVEL=max` 会让客户端发 >32768 的 max_tokens，DashScope 直接 400
 4. 切回时还得记住原来用哪个——状态管理复杂
 
 旁路直接调 DashScope 绕开了**全部**这些问题：主会话零改动，max_tokens 完全可控，无状态切换。
