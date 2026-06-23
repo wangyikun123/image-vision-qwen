@@ -1,6 +1,6 @@
 ---
 name: image-vision-qwen
-description: 用阿里云 DashScope 视觉模型识别图片（默认 Qwen3.7-Plus，可通过 VISION_MODEL 环境变量随意更换为 qwen-vl-max 等）。当用户提供图片文件、截图、base64 图片，或要求看图/识图/分析图片内容/读图/OCR 时使用。主会话模型永远不变——图片识别是一次直接旁路调用 DashScope，结果返回后继续用用户当前模型。
+description: 用阿里云 DashScope 视觉模型识别图片（默认 Qwen3.7-Plus，可通过 VISION_MODEL 环境变量随意更换为 qwen-vl-max 等）。当用户提供图片文件、截图、base64 图片，或要求看图/识图/分析图片内容/读图/OCR 时使用。主会话模型永远不变——图片识别是一次直接旁路调用 DashScope，结果返回后继续用用户当前模型。绝不切换 cc-switch provider。
 ---
 
 # 图片识别 via DashScope 视觉模型
@@ -8,8 +8,8 @@ description: 用阿里云 DashScope 视觉模型识别图片（默认 Qwen3.7-Pl
 ## 核心原则（最重要）
 
 **主会话的模型永远不切换。** 图片识别是一次**直接 curl 调用 DashScope** 的旁路操作：
-- 不动任何 provider 配置、不改 env、不重启会话
-- 主会话继续用用户当前选中的模型（任意）
+- 不动 cc-switch、不改 env、不重启会话
+- 主会话继续用用户当前选中的模型（GLM / DeepSeek / Nvidia / 任意）
 - 调用视觉模型时 **max_tokens 显式卡死 ≤ 32768**（DashScope 的硬上限，超了会 400）
 
 适用于：你在用某个不支持视觉（或视觉弱）的聊天模型，但偶尔需要识别图片，不想为了识图就切走整个会话的模型。
@@ -27,17 +27,27 @@ description: 用阿里云 DashScope 视觉模型识别图片（默认 Qwen3.7-Pl
 ## 前置准备：API Key 与模型
 
 ```bash
-# API key（必填）：阿里云百炼/DashScope 控制台获取
+# API key：优先环境变量，没有则从 cc-switch.db 自动取（本机零配置）
 DASHSCOPE_KEY="${DASHSCOPE_API_KEY:-}"
+
+if [ -z "$DASHSCOPE_KEY" ]; then
+  DASHSCOPE_KEY=$(python -c "
+import sqlite3, json
+c = sqlite3.connect(r'C:\Users\hao18\.cc-switch\cc-switch.db')
+for row in c.execute(\"SELECT settings_config FROM providers WHERE app_type='claude'\").fetchall():
+    cfg = json.loads(row[0]); env = cfg.get('env', {})
+    if 'qwen' in (env.get('ANTHROPIC_DEFAULT_OPUS_MODEL') or '').lower():
+        print(env.get('ANTHROPIC_AUTH_TOKEN','')); break
+" 2>/dev/null)
+fi
+
+if [ -z "$DASHSCOPE_KEY" ]; then
+  echo "错误: 未找到 DashScope API key。请设置环境变量 DASHSCOPE_API_KEY，或在 cc-switch 里配置 qwen provider。"
+  exit 1
+fi
 
 # 识别模型（可选，默认 qwen3.7-plus，可随意改成 qwen-vl-max / qwen-vl-plus / qwen3-vl-plus 等任意 DashScope 视觉模型）
 VISION_MODEL="${VISION_MODEL:-qwen3.7-plus}"
-
-if [ -z "$DASHSCOPE_KEY" ]; then
-  echo "错误: 未设置 DASHSCOPE_API_KEY 环境变量。"
-  echo "获取方式：阿里云百炼/DashScope 控制台 → 创建 API-KEY，然后 export DASHSCOPE_API_KEY=sk-xxx"
-  exit 1
-fi
 ```
 
 > **想换视觉模型？** 设 `VISION_MODEL` 环境变量即可，例如 `export VISION_MODEL=qwen-vl-max`，无需改 skill 代码。实测可用：`qwen3.7-plus`（默认）、`qwen-vl-max`、`qwen-vl-plus`、`qwen3-vl-plus`。
@@ -46,13 +56,12 @@ fi
 
 ### 1. 准备图片 → base64
 
-**文件转 base64**（跨平台处理换行差异）：
+**文件转 base64**（写入文件，避免命令行长度限制）：
 
 ```bash
-IMG_PATH="/path/to/image.png"   # 用户给的路径
-
+IMG_PATH="/c/Users/hao18/Pictures/Screenshots/xxx.png"   # 用户给的路径
 # 自动推断 media_type
-case "$(echo "$IMG_PATH" | tr '[:upper:]' '[:lower:]')" in
+case "$IMG_PATH" in
   *.png)  MT="image/png" ;;
   *.jpg|*.jpeg) MT="image/jpeg" ;;
   *.gif)  MT="image/gif" ;;
@@ -60,14 +69,7 @@ case "$(echo "$IMG_PATH" | tr '[:upper:]' '[:lower:]')" in
   *.bmp)  MT="image/bmp" ;;
   *) MT="image/png" ;;  # 默认
 esac
-
-# base64 编码并去换行（兼容 macOS/BSD 和 Linux/GNU）
-if base64 -w 0 "$IMG_PATH" >/dev/null 2>&1; then
-  base64 -w 0 "$IMG_PATH" > /tmp/img.b64        # GNU coreutils / Git Bash
-else
-  base64 "$IMG_PATH" | tr -d '\n' > /tmp/img.b64  # macOS / BSD
-fi
-IMG_B64=$(cat /tmp/img.b64)
+base64 -w 0 "$IMG_PATH" > /tmp/img.b64
 ```
 
 **如果用户直接给了 base64**（贴在对话里），直接用，但要：
@@ -76,10 +78,9 @@ IMG_B64=$(cat /tmp/img.b64)
 
 ### 2. 构造请求体到文件（关键：避免大图超命令行长度限制）
 
-⚠️ **不要用 `curl -d "..."` 内联 base64**——大图 base64 会超命令行长度限制（`Argument list too long`）。必须先把请求体写到文件，再用 `--data @file`：
+⚠️ **不要用 `curl -d "..."` 内联 base64**——大图 base64 会超命令行长度限制（`Argument list too long`）。必须先写文件再用 `--data @file`：
 
 ```bash
-# 把图片 base64 和用户问题组装成 JSON 请求体，写到文件
 python -c "
 import json
 body = {
@@ -161,16 +162,16 @@ for b in d.get('content', []):
 | `InvalidParameter` model 相关 | 模型名错 | 确认 `VISION_MODEL` 的值是 DashScope 支持的视觉模型 |
 | `403 Forbidden` | 该模型未在账号开通 | 到阿里云百炼控制台开通该模型，或换 `qwen3.7-plus` |
 | `Argument list too long` | 用了 `curl -d` 内联大图 base64 | 改用 `--data @file`（见执行流程第 2-3 步） |
-| 401 / 认证失败 | key 失效 | 重新检查 `DASHSCOPE_API_KEY` |
+| 401 / 认证失败 | key 失效 | 重新检查 DASHSCOPE_API_KEY 或 cc-switch.db 里 qwen provider 的 token |
 | 图片格式错 | media_type 不匹配 | 按实际扩展名设 media_type |
 | 超时 | 图太大 | 加大 `--max-time`；或先压缩图片 |
 
-## 设计原理（给未来的你）
+## 为什么这样设计（给未来的你）
 
-如果用"切 provider → 识图 → 切回"的方案：
-1. 要改全局激活 provider
-2. 要重启会话 / proxy 才生效
-3. `CLAUDE_CODE_EFFORT_LEVEL=max` 会让客户端发 >32768 的 max_tokens，DashScope 直接 400
+用户用 cc-switch 管理多个 provider（GLM / DeepSeek / Nvidia / OpenRouter...），**日常聊天用的模型不固定**。如果用"切 provider → 识图 → 切回"的方案：
+1. 要改 cc-switch 全局激活 provider
+2. 要重启会话 / cc-switch proxy 才生效
+3. `CLAUDE_CODE_EFFORT_LEVEL=max` 会让 Claude Code 发 >32768 的 max_tokens，DashScope 直接 400
 4. 切回时还得记住原来用哪个——状态管理复杂
 
 旁路直接调 DashScope 绕开了**全部**这些问题：主会话零改动，max_tokens 完全可控，无状态切换。

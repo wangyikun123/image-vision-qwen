@@ -1,0 +1,5 @@
+interface:
+  display_name: "Image Vision Kimi"
+  short_description: "通过 Nvidia NIM 调用 Kimi K2.6 模型实现图片识别"
+  brand_color: "#76B900"
+  default_prompt: "Use codex-image-vision-kimi to analyze this image"
