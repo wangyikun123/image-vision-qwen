@@ -1,5 +1,5 @@
 ---
-name: image-vision-qwen
+name: image-vision
 description: 用阿里云 DashScope 视觉模型识别图片（默认 Qwen3.7-Plus，可通过 VISION_MODEL 环境变量随意更换为 qwen-vl-max 等）。当用户提供图片文件、截图、base64 图片，或要求看图/识图/分析图片内容/读图/OCR 时使用。主会话模型永远不变——图片识别是一次直接旁路调用 DashScope，结果返回后继续用用户当前模型。绝不切换 cc-switch provider。
 ---
 

@@ -1,4 +1,4 @@
-# image-vision-qwen
+# image-vision
 
 一个 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) Skill：**用阿里云 DashScope 视觉模型识别图片，主会话模型不动**。
 
@@ -39,17 +39,13 @@ Claude 把识别结果交给用户, 继续用原模型对话
 
 ```bash
 # 克隆
-git clone https://github.com/wangyikun123/image-vision-qwen.git
+git clone https://github.com/wangyikun123/image-vision.git
 
-# 放到 Claude Code 能识别的 skills 目录
-# 用户级（所有项目可用）：
-mkdir -p ~/.claude/skills
-ln -s /path/to/image-vision-qwen ~/.claude/skills/image-vision-qwen
+# Claude Code 安装: symlink claude/ 目录到 Claude Code skills
+ln -s "$PWD/claude" ~/.claude/skills/image-vision
 
-# 或项目级（仅当前项目）：
-mkdir -p .claude/skills
-ln -s /path/to/image-vision-qwen .claude/skills/image-vision-qwen
-```
+# Codex 安装: symlink codex/ 目录到 Codex skills
+New-Item -ItemType SymbolicLink -Path "$env:USERPROFILE\.codex\skills\codex-image-vision-kimi" -Target "$PWD\codex"
 
 ## 用法
 
@@ -140,7 +136,7 @@ source ~/.zshrc
 
 ```powershell
 # 1. Clone 仓库
-git clone https://github.com/wangyikun123/image-vision-qwen.git
+git clone https://github.com/wangyikun123/image-vision.git
 
 # 2. 把 codex/ 目录 symlink（或以管理员身份复制）到 Codex skills 目录
 New-Item -ItemType SymbolicLink -Path "$env:USERPROFILE\.codex\skills\codex-image-vision-kimi" -Target "$PWD\codex"

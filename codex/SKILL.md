@@ -168,9 +168,9 @@ Write-Output $TEXT
 
 ## 和 Claude 版本的关系
 
-本 skill 是 `image-vision-qwen`（Claude Code 用 DashScope Qwen 识图）的 Codex 姐妹篇。核心设计理念一致——旁路调用，主会话零改动：
+本 skill 是 `image-vision`（Claude Code 用 DashScope Qwen 识图）的 Codex 姐妹篇。核心设计理念一致——旁路调用，主会话零改动：
 
 - **Claude 版**：调 DashScope Anthropic 端点，用 `image` 块（Anthropic 格式）
 - **Codex 版**：调 Nvidia NIM OpenAI 端点，用 `image_url` 块（OpenAI 格式）
 
-两个 skill 共存在同一个 GitHub 仓库 [image-vision-qwen](https://github.com/wangyikun123/image-vision-qwen)。
+两个 skill 共存在同一个 GitHub 仓库 [image-vision](https://github.com/wangyikun123/image-vision)。
